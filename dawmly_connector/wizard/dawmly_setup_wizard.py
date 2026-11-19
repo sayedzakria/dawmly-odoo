@@ -31,7 +31,12 @@ class DawmlySetupWizard(models.TransientModel):
     )
     database_name = fields.Char(string="Database", readonly=True)
     username = fields.Char(string="Username", readonly=True)
-    api_key = fields.Char(string="API Key", readonly=True)
+    api_key = fields.Char(
+        string="API Key",
+        compute="_compute_api_key",
+        store=False,
+        readonly=True,
+    )
     user_status = fields.Char(string="Connector User", readonly=True)
     journal_status = fields.Char(string="Payroll Journal", readonly=True)
 
@@ -46,6 +51,12 @@ class DawmlySetupWizard(models.TransientModel):
         )
         for record in self:
             record.existing_key_warning = has_key
+
+    @api.depends_context("dawmly_setup_api_key")
+    def _compute_api_key(self):
+        api_key = self.env.context.get("dawmly_setup_api_key") or False
+        for record in self:
+            record.api_key = api_key
 
     def action_setup(self):
         self.ensure_one()
@@ -72,7 +83,6 @@ class DawmlySetupWizard(models.TransientModel):
                 "odoo_url": base_url,
                 "database_name": self.env.cr.dbname,
                 "username": connector_user.login,
-                "api_key": api_key,
                 "user_status": user_status,
                 "journal_status": journal_status,
             }
@@ -84,6 +94,7 @@ class DawmlySetupWizard(models.TransientModel):
             "res_id": self.id,
             "view_mode": "form",
             "target": "new",
+            "context": dict(self.env.context, dawmly_setup_api_key=api_key),
         }
 
     def action_open_dawmly(self):

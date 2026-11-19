@@ -36,14 +36,16 @@ class TestDawmlySetupWizard(TransactionCase):
 
     def test_setup_creates_user_persistent_key_and_journal(self):
         wizard = self.env["dawmly.setup.wizard"].with_user(self.admin_user).create({})
-        wizard.action_setup()
+        action = wizard.action_setup()
+        api_key = action["context"].get("dawmly_setup_api_key")
 
         self.assertEqual(wizard.state, "ready")
         self.assertTrue(wizard.odoo_url)
         self.assertEqual(wizard.database_name, self.env.cr.dbname)
         self.assertEqual(wizard.username, self.CONNECTOR_LOGIN)
-        self.assertTrue(wizard.api_key)
-        self.assertEqual(len(wizard.api_key), 40)
+        self.assertTrue(api_key)
+        self.assertEqual(len(api_key), 40)
+        self.assertEqual(wizard.with_context(action["context"]).api_key, api_key)
 
         connector_user = (
             self.env["res.users"]
@@ -70,7 +72,7 @@ class TestDawmlySetupWizard(TransactionCase):
         auth_uid = (
             self.env["res.users.apikeys"]
             .sudo()
-            ._check_credentials(scope="rpc", key=wizard.api_key)
+            ._check_credentials(scope="rpc", key=api_key)
         )
         self.assertEqual(auth_uid, connector_user.id)
 
@@ -152,9 +154,10 @@ class TestDawmlySetupWizard(TransactionCase):
 
     def test_setup_is_idempotent_and_revokes_previous_key(self):
         wizard_1 = self.env["dawmly.setup.wizard"].with_user(self.admin_user).create({})
-        wizard_1.action_setup()
-        first_key = wizard_1.api_key
+        action_1 = wizard_1.action_setup()
+        first_key = action_1["context"].get("dawmly_setup_api_key")
         self.assertTrue(first_key)
+        self.assertEqual(wizard_1.with_context(action_1["context"]).api_key, first_key)
 
         user_1 = self.env["res.users"].search([("login", "=", self.CONNECTOR_LOGIN)])
         journal_1 = self.env["account.journal"].search(
@@ -169,9 +172,10 @@ class TestDawmlySetupWizard(TransactionCase):
 
         wizard_2 = self.env["dawmly.setup.wizard"].with_user(self.admin_user).create({})
         self.assertTrue(wizard_2.existing_key_warning)
-        wizard_2.action_setup()
-        second_key = wizard_2.api_key
+        action_2 = wizard_2.action_setup()
+        second_key = action_2["context"].get("dawmly_setup_api_key")
         self.assertTrue(second_key)
+        self.assertEqual(wizard_2.with_context(action_2["context"]).api_key, second_key)
         self.assertNotEqual(second_key, first_key)
 
         users = self.env["res.users"].search([("login", "=", self.CONNECTOR_LOGIN)])
@@ -246,8 +250,10 @@ class TestDawmlySetupWizard(TransactionCase):
 
     def test_second_setup_resets_groups_and_revokes_all_keys(self):
         wizard_1 = self.env["dawmly.setup.wizard"].with_user(self.admin_user).create({})
-        wizard_1.action_setup()
-        first_key = wizard_1.api_key
+        action_1 = wizard_1.action_setup()
+        first_key = action_1["context"].get("dawmly_setup_api_key")
+        self.assertTrue(first_key)
+        self.assertEqual(wizard_1.with_context(action_1["context"]).api_key, first_key)
 
         connector_user = self.env["res.users"].search(
             [("login", "=", self.CONNECTOR_LOGIN)], limit=1
@@ -270,7 +276,10 @@ class TestDawmlySetupWizard(TransactionCase):
 
         wizard_2 = self.env["dawmly.setup.wizard"].with_user(self.admin_user).create({})
         self.assertTrue(wizard_2.existing_key_warning)
-        wizard_2.action_setup()
+        action_2 = wizard_2.action_setup()
+        second_key = action_2["context"].get("dawmly_setup_api_key")
+        self.assertTrue(second_key)
+        self.assertEqual(wizard_2.with_context(action_2["context"]).api_key, second_key)
 
         connector_user.invalidate_recordset()
         self.assertEqual(set(connector_user.groups_id.ids), expected_group_ids)
@@ -288,7 +297,7 @@ class TestDawmlySetupWizard(TransactionCase):
         self.assertEqual(
             self.env["res.users.apikeys"]
             .sudo()
-            ._check_credentials(scope="rpc", key=wizard_2.api_key),
+            ._check_credentials(scope="rpc", key=second_key),
             connector_user.id,
         )
         self.assertFalse(
@@ -326,3 +335,22 @@ class TestDawmlySetupWizard(TransactionCase):
         hash_after = self.env.cr.fetchone()[0]
         self.assertTrue(hash_after)
         self.assertNotEqual(hash_after, hash_before)
+
+    def test_api_key_never_stored_in_database(self):
+        wizard = self.env["dawmly.setup.wizard"].with_user(self.admin_user).create({})
+        action = wizard.action_setup()
+        api_key = (action.get("context") or {}).get("dawmly_setup_api_key") or wizard.api_key
+        self.assertTrue(api_key)
+
+        self.env.flush_all()
+        self.env.cr.execute(
+            "SELECT row_to_json(w)::text FROM dawmly_setup_wizard w WHERE id = %s",
+            [wizard.id],
+        )
+        row = self.env.cr.fetchone()
+        self.assertIsNotNone(row)
+        self.assertNotIn(api_key, row[0])
+
+        self.assertEqual(action["context"].get("dawmly_setup_api_key"), api_key)
+        self.assertEqual(wizard.with_context(action["context"]).api_key, api_key)
+        self.assertFalse(wizard.api_key)
