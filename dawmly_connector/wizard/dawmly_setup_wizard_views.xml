@@ -53,8 +53,8 @@
                         <strong>Integrations → Odoo</strong> in Dawmly.
                     </p>
                     <p class="mb-0">
-                        <strong>Copy your API key now:</strong> Odoo does not store API keys in readable form
-                        and will not show this key again after you close this screen.
+                        <strong>Copy your API key now:</strong> Odoo keeps only a hashed copy,
+                        Dawmly Setup does not save the key, and it cannot be shown again after closing.
                     </p>
                 </div>
 
